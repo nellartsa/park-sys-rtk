@@ -1,6 +1,9 @@
-from flask import Flask
+from flask import Flask, jsonify
 from flask_restful import Resource, Api, request
+from flask_cors import CORS
 from datetime import datetime, timedelta
+import random
+
 from database import db_conn
 
 distancesFromEntry = [
@@ -14,21 +17,29 @@ parkingSlots = [
 
 app = Flask(__name__)
 api = Api(app)
+CORS(app)
 connection, cursor = db_conn()
 
-@app.route('/', methods=["GET"])
+@app.route('/parking-data', methods=["GET"])
 def retrieve_parking_data():
-  cursor.execute("SELECT slot_taken FROM parking_slots")
+  cursor.execute("SELECT slot_taken FROM parking_slots WHERE exit_status=0")
   data = cursor.fetchall()
 
-  return {"data": data}
+  result = {}
+
+  for i in data:
+    mono = {"slot_%s"%i : i[0]}
+    result.update(mono)
+
+  return jsonify(result)
 
 @app.route('/vehicle-in', methods=["PUT"])
 def record_vehicle_in():
   data = request.get_json()
   vehicle_id = data["vehicle_id"]
-  vehicle_type = data["vehicle_type"]
-  entry_point = data["entry_point"]
+  vehicle_type =  0 if data["vehicle_type"] == "Small" else 1 if data["vehicle_type"] == "Medium" else 2  
+  entry_point = random.randint(0,2)
+
   current_datetime = datetime.now()
 
   cursor.execute("SELECT _id, vehicle_id, datetime_in FROM parking_slots WHERE vehicle_id='%s' ORDER BY _id DESC LIMIT 1" %(vehicle_id))
@@ -83,7 +94,7 @@ def record_vehicle_in():
   return {"message": "driver registered for parking"}
 
 
-@app.route("/vehicle-exit", methods=["PUT"])
+@app.route("/vehicle-out", methods=["PUT"])
 def mark_vehicle_exit():
   data = request.get_json()
   vehicle_id = data["vehicle_id"]
@@ -114,11 +125,12 @@ def mark_vehicle_exit():
 
       # payment if exceeded 24 hrs
       if rounded >= 24:
-        payment = 5000 + ((rounded - 24) * price_based)
+        days_counted  = rounded // 24
+        payment = (days_counted * 5000) + ((rounded - (days_counted * 24)) * price_based)
         cursor.execute("UPDATE parking_slots SET payment=%s, exit_status=1 WHERE _id=%s" %(payment, _id))
         connection.commit()
 
-        return {"message": "payment is %s" %payment}
+        return {"message": "payment for %s is %s" %(vehicle_id, payment)}
 
       # payment if exceeded 3 hrs
       else:
@@ -126,14 +138,14 @@ def mark_vehicle_exit():
         cursor.execute("UPDATE parking_slots SET payment=%s, exit_status=1 WHERE _id=%s" %(payment, _id))
         connection.commit()
 
-        return {"message": "payment is %s" %payment}
+        return {"message": "payment for %s is %s" %(vehicle_id, payment)}
 
     # normal payment
     else:
       cursor.execute("UPDATE parking_slots SET payment=%s, exit_status=1 WHERE _id=%s" %(price_based, _id))
       connection.commit()
 
-      return {"message": "payment is %s" %price_based}
+      return {"message": "payment for %s is %s" %(vehicle_id, price_based)}
 
   else:
     return {"message": "vehicle not registered"}
